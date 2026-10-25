@@ -69,7 +69,7 @@
       <div
         v-show="isPreview && isMarkdownFile"
         id="preview-container"
-        class="md_preview"
+        class="md_preview markdown-body"
         v-html="previewContent"
       ></div>
       <form v-show="!isPreview || !isMarkdownFile" id="editor"></form>
@@ -92,9 +92,8 @@ import HeaderBar from "@/components/header/HeaderBar.vue";
 import { useAuthStore } from "@/stores/auth";
 import { useFileStore } from "@/stores/file";
 import { useLayoutStore } from "@/stores/layout";
-import { getEditorTheme } from "@/utils/theme";
-import { marked } from "marked";
-import markedKatex from "marked-katex-extension";
+import { getEditorTheme, getTheme } from "@/utils/theme";
+import { markdownToHtml } from "@/utils/markdown";
 import { inject, onBeforeUnmount, onMounted, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { onBeforeRouteUpdate, useRoute, useRouter } from "vue-router";
@@ -119,11 +118,32 @@ const previewContent = ref("");
 const isMarkdownFile =
   fileStore.req?.name.endsWith(".md") ||
   fileStore.req?.name.endsWith(".markdown");
-const katexOptions = {
-  output: "mathml" as const,
-  throwOnError: false,
+
+// Markdown is rendered with a fully bundled markdown-it + highlight.js pipeline
+// (see utils/markdown.ts) and styled with github-markdown-css, so the preview
+// looks like GitHub and needs no runtime asset fetching. Theme stylesheets are
+// imported lazily to match the current light/dark theme.
+let themeStylesLoaded = false;
+const loadThemeStyles = async () => {
+  if (themeStylesLoaded) {
+    return;
+  }
+  themeStylesLoaded = true;
+  if (getTheme() === "dark") {
+    await import("github-markdown-css/github-markdown-dark.css");
+    await import("highlight.js/styles/github-dark.css");
+  } else {
+    await import("github-markdown-css/github-markdown-light.css");
+    await import("highlight.js/styles/github.css");
+  }
 };
-marked.use(markedKatex(katexOptions));
+
+const renderMarkdown = async (content: string) => {
+  await loadThemeStyles();
+  previewContent.value = DOMPurify.sanitize(markdownToHtml(content), {
+    ADD_ATTR: ["target"],
+  });
+};
 
 const isSelectionEmpty = ref(true);
 
@@ -164,10 +184,9 @@ onMounted(() => {
     if (isMarkdownFile && isPreview.value) {
       const new_value = editor.value?.getValue() || "";
       try {
-        previewContent.value = DOMPurify.sanitize(await marked(new_value));
+        await renderMarkdown(new_value);
       } catch (error) {
-        console.error("Failed to convert content to HTML:", error);
-        previewContent.value = "";
+        console.error("Failed to render markdown preview:", error);
       }
     }
   });

@@ -125,6 +125,11 @@
         >
         </VideoPlayer>
         <object v-else-if="isPdf" class="pdf" :data="previewUrl"></object>
+        <OfficeViewer
+          v-else-if="isOffice"
+          :path="fileStore.req?.path || ''"
+          :extension="fileStore.req?.extension || ''"
+        />
         <div v-else-if="fileStore.req?.type == 'blob'" class="info">
           <div class="title">
             <i class="material-icons">feedback</i>
@@ -194,6 +199,7 @@ import Action from "@/components/header/Action.vue";
 import ExtendedImage from "@/components/files/ExtendedImage.vue";
 import VideoPlayer from "@/components/files/VideoPlayer.vue";
 import CsvViewer from "@/components/files/CsvViewer.vue";
+import OfficeViewer from "@/components/files/OfficeViewer.vue";
 import { VueReader } from "vue-reader";
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -309,6 +315,41 @@ const previewUrl = computed(() => {
 const isPdf = computed(() => fileStore.req?.extension.toLowerCase() == ".pdf");
 const isEpub = computed(
   () => fileStore.req?.extension.toLowerCase() == ".epub"
+);
+
+// Office documents (doc/ppt/excel …) are rendered and optionally edited via the
+// OnlyOffice Document Server. These extensions are detected on the client; the
+// backend returns a 501 if no Document Server is configured, which the viewer
+// surfaces as a message.
+const officeExtensions = [
+  ".doc",
+  ".docx",
+  ".docm",
+  ".dot",
+  ".dotx",
+  ".odt",
+  ".ott",
+  ".rtf",
+  ".fodt",
+  ".xls",
+  ".xlsx",
+  ".xlsm",
+  ".xlt",
+  ".xltx",
+  ".ods",
+  ".ots",
+  ".fods",
+  ".ppt",
+  ".pptx",
+  ".pptm",
+  ".pot",
+  ".potx",
+  ".odp",
+  ".otp",
+  ".fodp",
+];
+const isOffice = computed(() =>
+  officeExtensions.includes(fileStore.req?.extension.toLowerCase() || "")
 );
 const isCsv = computed(
   () =>

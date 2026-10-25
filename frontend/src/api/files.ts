@@ -3,6 +3,7 @@ import { useLayoutStore } from "@/stores/layout";
 import { baseURL } from "@/utils/constants";
 import { upload as postTus, useTus } from "./tus";
 import { createURL, fetchURL, removePrefix, StatusError } from "./utils";
+import { encodePath } from "@/utils/url";
 import { isEncodableResponse, makeRawResource } from "@/utils/encodings";
 
 export async function fetch(url: string, signal?: AbortSignal) {
@@ -231,6 +232,18 @@ export function getSubtitlesURL(file: ResourceItem) {
   };
 
   return file.subtitles?.map((d) => createURL("api/subtitle" + d, params));
+}
+
+// getOfficePreviewURL asks the backend to render an Office document to PDF
+// (cached server-side) and returns a blob object URL for the compact PDF. Only
+// the PDF travels to the browser, so preview stays fast on remote links.
+//
+// `path` is a resource path (e.g. "/person/report.docx"), already relative to
+// the user's root — unlike route paths it must NOT go through removePrefix.
+export async function getOfficePreviewURL(path: string): Promise<string> {
+  const res = await fetchURL(`/api/office/preview${encodePath(path)}`, {});
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
 }
 
 export async function usage(url: string, signal: AbortSignal) {

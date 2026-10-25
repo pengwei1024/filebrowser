@@ -1,8 +1,8 @@
+/* github-markdown-css styles the `.markdown-body` content itself; this only
+   handles the surrounding box. */
 .md_preview {
-  padding: 1rem;
-  border: 1px solid #000;
-  font-size: 20px;
-  line-height: 1.2;
+  padding: 1.5rem 2rem;
+  box-sizing: border-box;
 }
 
 #preview-container {

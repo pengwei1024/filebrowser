@@ -32,7 +32,7 @@ func NewHandler(
 	r := mux.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Security-Policy", `default-src 'self'; style-src 'unsafe-inline';`)
+			w.Header().Set("Content-Security-Policy", contentSecurityPolicy())
 			next.ServeHTTP(w, r)
 		})
 	})
@@ -49,7 +49,9 @@ func NewHandler(
 	api := r.PathPrefix("/api").Subrouter()
 
 	tokenExpirationTime := server.GetTokenExpirationTime(DefaultTokenExpirationTime)
-	api.Handle("/login", monkey(loginHandler(tokenExpirationTime), ""))
+	loginLimiter := newRateLimiter(server.LoginRateLimit, server.LoginRateLimitPerIP)
+	loginAlerter := newAlerter()
+	api.Handle("/login", monkey(loginHandler(tokenExpirationTime, loginLimiter, loginAlerter), ""))
 	api.Handle("/signup", monkey(signupHandler, ""))
 	api.Handle("/renew", monkey(renewHandler(tokenExpirationTime), ""))
 
@@ -81,6 +83,7 @@ func NewHandler(
 
 	api.Handle("/settings", monkey(settingsGetHandler, "")).Methods("GET")
 	api.Handle("/settings", monkey(settingsPutHandler, "")).Methods("PUT")
+	api.Handle("/settings/alert-test", monkey(alertTestHandler, "")).Methods("POST")
 
 	api.PathPrefix("/raw").Handler(monkey(rawHandler, "/api/raw")).Methods("GET")
 	api.PathPrefix("/preview/{size}/{path:.*}").
@@ -89,9 +92,29 @@ func NewHandler(
 	api.PathPrefix("/search").Handler(monkey(searchHandler, "/api/search")).Methods("GET")
 	api.PathPrefix("/subtitle").Handler(monkey(subtitleHandler, "/api/subtitle")).Methods("GET")
 
+	api.PathPrefix("/office/preview").Handler(monkey(officePreviewHandler, "/api/office/preview")).Methods("GET")
+
 	public := api.PathPrefix("/public").Subrouter()
 	public.PathPrefix("/dl").Handler(monkey(publicDlHandler, "/api/public/dl/")).Methods("GET")
 	public.PathPrefix("/share").Handler(monkey(publicShareHandler, "/api/public/share/")).Methods("GET")
 
 	return stripPrefix(server.BaseURL, r), nil
+}
+
+// contentSecurityPolicy builds the CSP header. The markdown preview is fully
+// bundled (markdown-it + highlight.js + github-markdown-css), but the Ace
+// editor still loads its syntax modes from jsDelivr, so that origin is allowed.
+// `blob:` is needed for the Office preview, which displays a converted PDF from
+// a blob URL.
+func contentSecurityPolicy() string {
+	const cdn = "https://cdn.jsdelivr.net"
+
+	return "default-src 'self'; " +
+		"script-src 'self' 'unsafe-inline' 'unsafe-eval' " + cdn + "; " +
+		"style-src 'self' 'unsafe-inline' " + cdn + "; " +
+		"connect-src 'self' " + cdn + "; " +
+		"object-src 'self' blob:; " +
+		"frame-src 'self' blob:; " +
+		"img-src 'self' data: blob:; " +
+		"font-src 'self' data: " + cdn + ";"
 }

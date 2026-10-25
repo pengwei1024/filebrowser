@@ -1,8 +1,10 @@
 package fbhttp
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/golang-jwt/jwt/v5/request"
+	"github.com/tomasen/realip"
 
 	fbAuth "github.com/filebrowser/filebrowser/v2/auth"
 	fberrors "github.com/filebrowser/filebrowser/v2/errors"
@@ -153,10 +156,18 @@ func withAdmin(fn handleFunc) handleFunc {
 	})
 }
 
-func loginHandler(tokenExpireTime time.Duration) handleFunc {
+func loginHandler(tokenExpireTime time.Duration, limiter *rateLimiter, alerter *alerter) handleFunc {
 	return func(w http.ResponseWriter, r *http.Request, d *data) (int, error) {
 		if r.Body != nil {
 			r.Body = http.MaxBytesReader(w, r.Body, maxAuthBodySize)
+		}
+
+		// Identify the attempt before touching the (expensive) auth backend so a
+		// throttled client is turned away before any bcrypt comparison runs.
+		username := loginUsername(r, d)
+		clientIP := realip.FromRequest(r)
+		if !limiter.allow(username, clientIP) {
+			return http.StatusTooManyRequests, nil
 		}
 
 		auther, err := d.store.Auth.Get(d.settings.AuthMethod)
@@ -167,13 +178,52 @@ func loginHandler(tokenExpireTime time.Duration) handleFunc {
 		user, err := auther.Auth(r, d.store.Users, d.settings, d.server)
 		switch {
 		case errors.Is(err, os.ErrPermission):
+			sig := limiter.recordFailure(username, clientIP)
+			// Alert destination comes from the live web admin settings, so
+			// changes take effect without restarting the server.
+			limiter.alertOnCross(alerter, sig, username, clientIP,
+				d.settings.LoginAlertToken, d.settings.LoginAlertGroup)
 			return http.StatusForbidden, nil
 		case err != nil:
 			return http.StatusInternalServerError, err
 		}
 
+		limiter.recordSuccess(username, clientIP)
 		return printToken(w, r, d, user, tokenExpireTime)
 	}
+}
+
+// loginUsername makes a best-effort attempt to recover the username an incoming
+// login is for, so the rate limiter can key on it. For proxy auth the identity
+// is the configured header; otherwise it is the "username" field of the JSON
+// body, which is buffered and restored so the auth backend can still read it.
+// A missing or unparseable username is fine — it simply shares one counter.
+func loginUsername(r *http.Request, d *data) string {
+	if d.settings.AuthMethod == fbAuth.MethodProxyAuth {
+		if auther, err := d.store.Auth.Get(fbAuth.MethodProxyAuth); err == nil {
+			if proxy, ok := auther.(*fbAuth.ProxyAuth); ok && proxy.Header != "" {
+				return r.Header.Get(proxy.Header)
+			}
+		}
+		return ""
+	}
+
+	if r.Body == nil {
+		return ""
+	}
+
+	body, err := io.ReadAll(r.Body)
+	// Restore the body regardless, so the auth backend reads the same bytes.
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil {
+		return ""
+	}
+
+	var cred struct {
+		Username string `json:"username"`
+	}
+	_ = json.Unmarshal(body, &cred)
+	return cred.Username
 }
 
 type signupBody struct {

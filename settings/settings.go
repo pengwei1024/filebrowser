@@ -38,6 +38,13 @@ type Settings struct {
 	FileMode              fs.FileMode         `json:"fileMode"`
 	DirMode               fs.FileMode         `json:"dirMode"`
 	HideDotfiles          bool                `json:"hideDotfiles"`
+
+	// LoginAlertToken and LoginAlertGroup configure the Baidu IM webhook that is
+	// notified when the login throttle flags a suspected brute-force attack.
+	// They are edited through the web admin Settings page; when either is empty
+	// or zero no alert is sent, so the feature is off by default.
+	LoginAlertToken string `json:"loginAlertToken"`
+	LoginAlertGroup int    `json:"loginAlertGroup"`
 }
 
 // GetRules implements rules.Provider.
@@ -63,6 +70,14 @@ type Server struct {
 	AuthHook               string `json:"authHook"`
 	TokenExpirationTime    string `json:"tokenExpirationTime"`
 	FollowExternalSymlinks bool   `json:"followExternalSymlinks"`
+
+	// LoginRateLimit and LoginRateLimitPerIP cap failed login attempts per
+	// minute, keyed respectively by username and by client IP, to throttle
+	// online password guessing. Values <= 0 fall back to conservative
+	// defaults (see http.newRateLimiter). The throttle is always on; these
+	// only tune its thresholds.
+	LoginRateLimit      int `json:"loginRateLimit"`
+	LoginRateLimitPerIP int `json:"loginRateLimitPerIP"`
 
 	// CaseInsensitiveFs is detected from Root at startup rather than
 	// configured, and tells the rule checker to match paths case-insensitively.

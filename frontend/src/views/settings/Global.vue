@@ -168,6 +168,59 @@
     <div class="column">
       <form class="card" @submit.prevent="save">
         <div class="card-title">
+          <h2>{{ t("settings.loginAlert") }}</h2>
+        </div>
+
+        <div class="card-content">
+          <p class="small">{{ t("settings.loginAlertHelp") }}</p>
+
+          <p>
+            <label class="small" for="login-alert-token">{{
+              t("settings.loginAlertToken")
+            }}</label>
+            <input
+              class="input input--block"
+              type="text"
+              autocomplete="off"
+              id="login-alert-token"
+              v-model.trim="settings.loginAlertToken"
+            />
+          </p>
+
+          <p>
+            <label class="small" for="login-alert-group">{{
+              t("settings.loginAlertGroup")
+            }}</label>
+            <input
+              class="input input--block"
+              type="number"
+              min="0"
+              id="login-alert-group"
+              v-model.number="settings.loginAlertGroup"
+            />
+          </p>
+        </div>
+
+        <div class="card-action">
+          <input
+            class="button button--flat button--grey"
+            type="button"
+            :disabled="testingAlert"
+            :value="t('settings.loginAlertTest')"
+            @click="testAlert"
+          />
+          <input
+            class="button button--flat"
+            type="submit"
+            :value="t('buttons.update')"
+          />
+        </div>
+      </form>
+    </div>
+
+    <div class="column">
+      <form class="card" @submit.prevent="save">
+        <div class="card-title">
           <h2>{{ t("settings.userDefaults") }}</h2>
         </div>
 
@@ -268,6 +321,7 @@ const commandObject = ref<{
   [key: string]: string[] | string;
 }>({});
 const shellValue = ref<string>("");
+const testingAlert = ref(false);
 
 const $showError = inject<IToastError>("$showError")!;
 const $showSuccess = inject<IToastSuccess>("$showSuccess")!;
@@ -374,6 +428,23 @@ const save = async () => {
   }
 
   return true;
+};
+// testAlert sends a one-off message to the Baidu IM destination currently in
+// the form (saved or not) so the admin can confirm the token and group work.
+const testAlert = async () => {
+  if (settings.value === null) return;
+  testingAlert.value = true;
+  try {
+    await api.alertTest(
+      settings.value.loginAlertToken,
+      settings.value.loginAlertGroup
+    );
+    $showSuccess(t("settings.loginAlertTestSuccess"));
+  } catch (e: any) {
+    $showError(e);
+  } finally {
+    testingAlert.value = false;
+  }
 };
 // Parse the user-friendly input (e.g., "20M" or "1T") to bytes
 const parseBytes = (input: string) => {

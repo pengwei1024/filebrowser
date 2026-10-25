@@ -11,6 +11,8 @@ interface ISettings {
   tus: SettingsTus;
   shell: string[];
   commands: SettingsCommand;
+  loginAlertToken: string;
+  loginAlertGroup: number;
 }
 
 interface SettingsDefaults {
