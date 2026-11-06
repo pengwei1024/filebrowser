@@ -13,7 +13,6 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/golang-jwt/jwt/v5/request"
-	"github.com/tomasen/realip"
 
 	fbAuth "github.com/filebrowser/filebrowser/v2/auth"
 	fberrors "github.com/filebrowser/filebrowser/v2/errors"
@@ -165,7 +164,7 @@ func loginHandler(tokenExpireTime time.Duration, limiter *rateLimiter, alerter *
 		// Identify the attempt before touching the (expensive) auth backend so a
 		// throttled client is turned away before any bcrypt comparison runs.
 		username := loginUsername(r, d)
-		clientIP := realip.FromRequest(r)
+		clientIP := requestIP(r)
 		if !limiter.allow(username, clientIP) {
 			return http.StatusTooManyRequests, nil
 		}

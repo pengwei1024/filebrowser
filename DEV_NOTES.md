@@ -153,6 +153,31 @@ go build ./...    # 或参考 Taskfile.yml / docs
 - `entrypoint.sh`:首次没有 `/config/settings.json` 就从 `/defaults` 拷一份,然后 `filebrowser -c /config/settings.json`。
 - 挂载沿用原 `fb` 容器:`/config`、`/database`、`/srv`,端口 `8088->80`,`--restart always`,`-e PUID/PGID=1000`。镜像约 1.5GB(home 根分区余量够)。
 
+## 7.2 登录限流 / 告警 / 客户端 IP（2026-11-06）
+
+登录爆破防护由 `http/ratelimit.go` + `http/alert.go` + `http/auth.go:loginHandler` 组成,阈值来自 `settings.Server` 的 `LoginRateLimit`(按账号)和 `LoginRateLimitPerIP`(按 IP),告警目的地(`LoginAlertToken`/`LoginAlertGroup`)在 Web 设置页里改、即时生效。
+
+### 客户端 IP 解析(`http/clientip.go:requestIP`)
+不要用 `RemoteAddr`,也不要用 `realip.FromRequest`:
+- **容器里 `RemoteAddr` 常常是 Docker 网桥地址**(如 `172.17.0.1`)。只要请求是经宿主机上的反代/隧道(nginx、cloudflared 等)转进来的,所有访客看起来都一样。真实地址只存在于代理透传的头里。
+- `tomasen/realip` 的行为有个坑:当 `X-Forwarded-For` 里**全是私网地址**且 `X-Real-Ip` 为空时,它**返回空字符串**,于是告警里就出现"来自 IP "后面什么都没有。
+
+`requestIP` 的取值顺序:`X-Forwarded-For` 里**最左侧的公网地址** → `X-Real-Ip`/`CF-Connecting-IP`/`True-Client-IP` → `RemoteAddr` → 过程中见过的任一私网地址(保证稳定、不为空) → `unknown`。会处理带端口、带方括号的 IPv6、CGNAT(100.64/10 不算公网)。
+
+- ⚠️ **前提**:如果前面的代理**什么头都不透传**,代码也救不回来——信息根本不在请求里。要拿外网 IP,反代必须设置 `X-Real-IP` 或 `X-Forwarded-For`。
+- ⚠️ **信任边界**:这些头是客户端可伪造的,除非代理**覆盖**(而不是追加)它们。配了 IP 封禁后,伪造 XFF 可以绕过封禁、或者害别人被封。务必让反代覆盖这两个头。
+- `http/data.go` 的错误日志也改用 `requestIP`,这样日志和告警里的 IP 一致,便于排查。
+
+### IP 封禁
+- 同一 IP 在 1 分钟窗口内失败次数达到 `LoginRateLimitPerIP`(默认 **5**)→ **封禁 30 分钟**(`loginIPBanDuration`),期间 `allow()` 直接拒绝,不跑 bcrypt。
+- 封禁用独立的 `bans` map,**生命周期长于计数窗口**(窗口 1 分钟),否则等一分钟就能接着猜。
+- `unknown` 占位符**永不封禁**——它被所有解析不出 IP 的请求共用,封了等于全站拒服务。
+- 默认 per-IP 从 50 调到 5。**代价**:办公网 NAT 或代理不透传真实 IP 时,一个人打错密码会连坐同出口的所有人。这种环境要把 `LoginRateLimitPerIP` 调大。
+- 两个维度同时越限时(默认阈值相等时常见)只发**一条合并告警**,避免两条几乎重复的消息。
+- 单测:`http/clientip_test.go`(IP 解析各种头组合)、`http/ratelimit_ban_test.go`(封禁生效/跨窗口存活/到期解封/unknown 不封/默认 30 分钟)。
+
+> `github.com/tomasen/realip` 已无任何代码引用,但仍留在 `go.mod` 里(没跑 `go mod tidy`,避免离线环境下动 go.sum)。
+
 ## 8. 关键文件清单
 
 - `frontend/src/views/Files.vue:65`（视图分发：目录/CSV/文本→Editor，其余→Preview）
@@ -163,6 +188,8 @@ go build ./...    # 或参考 Taskfile.yml / docs
 - `frontend/src/components/files/OfficeViewer.vue`（Office→PDF 预览,`<object>` 显示）
 - `frontend/src/api/files.ts`（`getOfficePreviewURL`）
 - `http/office.go`（Office→PDF 转换+缓存+限流,`/api/office/preview`）
+- `http/ratelimit.go` / `http/alert.go`（登录限流 + IP 封禁 + IM 告警）
+- `http/clientip.go`（`requestIP`：从代理头解析真实外网 IP）
 - `http/http.go`（路由注册 + `contentSecurityPolicy()`）
 - `files/file.go:222`（后端类型探测，Office 落 `blob`，前端按扩展名识别）
 - `frontend/package.json` / `frontend/assets.go`（依赖 / dist embed）
